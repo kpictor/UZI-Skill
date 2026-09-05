@@ -257,15 +257,28 @@ def _fetch_with_context(fetcher, ticker, raw_context: dict) -> DimResult:
         result = mod.main(*args)
         if isinstance(result, dict) and "data" in result and isinstance(result["data"], dict):
             raw_data = result["data"]
+            actual_source = result.get("source") or f"legacy:{fetcher._legacy_module}"
+            legacy_error = result.get("error")
         elif isinstance(result, dict):
             raw_data = result
+            actual_source = f"legacy:{fetcher._legacy_module}"
+            legacy_error = None
         else:
             raw_data = {}
+            actual_source = f"legacy:{fetcher._legacy_module}"
+            legacy_error = None
     except Exception as e:
         return DimResult.error_result(
             fetcher.spec.dim_key,
             error=f"{type(e).__name__}: {str(e)[:100]}",
             source=f"legacy:{fetcher._legacy_module}",
+        )
+
+    if legacy_error and not raw_data:
+        return DimResult.error_result(
+            fetcher.spec.dim_key,
+            error=str(legacy_error),
+            source=actual_source,
         )
 
     # 规约 + 校验（复用 BaseFetcher 逻辑）
@@ -275,7 +288,7 @@ def _fetch_with_context(fetcher, ticker, raw_context: dict) -> DimResult:
     dim_result = DimResult(
         dim_key=fetcher.spec.dim_key,
         data={k: v for k, v in normalized.items() if k not in top_level},
-        source=f"legacy:{fetcher._legacy_module}",
+        source=actual_source,
         top_level_fields=top_level,
         latency_ms=int((_time.time() - t0) * 1000),
         fetched_at=_time.time(),

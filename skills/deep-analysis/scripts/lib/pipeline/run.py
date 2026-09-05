@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .collect import collect as pipeline_collect
@@ -47,6 +48,8 @@ def run_pipeline(ticker: str, resume: bool = True) -> str:
         "market": _basic_market if _basic_market in ("A", "H", "U") else _ti.market,
         "code": _ti.code,
         "full": _ti.full,
+        "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "execution_path": "pipeline",
         "dimensions": {k: v for k, v in raw_dict.items()
                        if k not in ("fund_managers", "similar_stocks")},
     }
@@ -113,7 +116,6 @@ def _write_cache(ticker: str, raw: dict) -> None:
     cache_dir = Path(rrt.__file__).parent / ".cache" / ti.full
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / "raw_data.json"
-    try:
-        cache_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    except Exception as e:
-        print(f"   ⚠️ 写 cache 失败: {e}")
+    tmp_path = cache_path.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    tmp_path.replace(cache_path)

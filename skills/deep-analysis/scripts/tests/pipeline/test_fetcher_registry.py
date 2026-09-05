@@ -27,6 +27,16 @@ def test_registry_all_adapters_loadable():
         assert isinstance(f.spec.sources, list) and len(f.spec.sources) > 0
 
 
+def test_fetcher_ttls_follow_data_volatility():
+    from lib.cache import TTL_INTRADAY, TTL_QUARTERLY, TTL_REALTIME, TTL_STATIC
+    from lib.pipeline.fetchers import get_fetcher
+
+    assert get_fetcher("0_basic").spec.cache_ttl_sec == TTL_REALTIME
+    assert get_fetcher("2_kline").spec.cache_ttl_sec == TTL_INTRADAY
+    assert get_fetcher("1_financials").spec.cache_ttl_sec == TTL_QUARTERLY
+    assert get_fetcher("5_chain").spec.cache_ttl_sec == TTL_STATIC
+
+
 def test_fetcher_adapter_returns_dim_result(monkeypatch):
     """adapter 跑 legacy main · 返 DimResult · 空时 quality=MISSING·不是 FULL."""
     from lib.pipeline.fetchers import get_fetcher
@@ -52,6 +62,23 @@ def test_fetcher_adapter_catches_legacy_exception(monkeypatch):
     r = f.fetch("300470.SZ")
     assert r.quality == Quality.ERROR
     assert "SSL fail" in r.error
+
+
+def test_fetcher_adapter_preserves_actual_source_and_wrapped_error(monkeypatch):
+    from lib.pipeline import Quality
+    from lib.pipeline.fetchers import get_fetcher
+
+    import fetch_basic
+    monkeypatch.setattr(fetch_basic, "main", lambda t: {
+        "data": {},
+        "source": "upstream:real",
+        "fallback": True,
+        "error": "upstream failed",
+    })
+    result = get_fetcher("0_basic").fetch("300470.SZ")
+    assert result.source == "upstream:real"
+    assert result.error == "upstream failed"
+    assert result.quality == Quality.ERROR
 
 
 def test_fund_holders_adapter_extracts_top_level(monkeypatch):

@@ -19,7 +19,7 @@ def _fake_yfinance(monkeypatch, ticker_obj):
     )
 
 
-def test_us_financials_appends_newer_quarterly_ttm(monkeypatch):
+def test_us_financials_keeps_ttm_separate_from_annual_history(monkeypatch):
     import fetch_financials
 
     annual = pd.DataFrame(
@@ -43,7 +43,12 @@ def test_us_financials_appends_newer_quarterly_ttm(monkeypatch):
         quarterly_financials=quarterly,
         balance_sheet=pd.DataFrame(),
         cashflow=pd.DataFrame(),
-        info={"returnOnEquity": 0.24, "profitMargins": 0.18},
+        info={
+            "returnOnEquity": 0.24,
+            "profitMargins": 0.18,
+            "revenueGrowth": 0.42,
+            "earningsGrowth": 0.31,
+        },
     )
     _fake_yfinance(monkeypatch, fake)
 
@@ -51,11 +56,13 @@ def test_us_financials_appends_newer_quarterly_ttm(monkeypatch):
 
     assert out["financial_basis"] == "TTM"
     assert out["financial_period"] == "2026-05-31"
-    assert out["financial_years"] == ["2024", "2025", "TTM 2026-05-31"]
-    assert out["revenue_history"][-1] == 1385.0
-    assert out["net_profit_history"][-1] == 505.0
+    assert out["financial_years"] == ["2024", "2025"]
+    assert out["revenue_history"] == [251.0, 374.0]
+    assert out["net_profit_history"] == [11.0, 85.4]
     assert out["revenue_ttm"] == 1385.0
     assert out["net_profit_ttm"] == 505.0
+    assert out["revenue_growth_yoy"] == 42.0
+    assert out["net_profit_growth_yoy"] == 31.0
     assert "financial_staleness_warning" not in out
 
 

@@ -16,8 +16,35 @@ from __future__ import annotations
 import importlib
 from typing import Any, Callable
 
+from ...cache import TTL_DAILY, TTL_HOURLY, TTL_INTRADAY, TTL_QUARTERLY, TTL_REALTIME, TTL_STATIC
 from ..base_fetcher import BaseFetcher
 from ..schema import DimResult, FetcherSpec, Quality
+
+
+_TTL_BY_DIM = {
+    "0_basic": TTL_REALTIME,
+    "1_financials": TTL_QUARTERLY,
+    "2_kline": TTL_INTRADAY,
+    "3_macro": TTL_DAILY,
+    "4_peers": TTL_QUARTERLY,
+    "5_chain": TTL_STATIC,
+    "6_fund_holders": TTL_QUARTERLY,
+    "6_research": TTL_HOURLY,
+    "7_industry": TTL_DAILY,
+    "8_materials": TTL_DAILY,
+    "9_futures": TTL_INTRADAY,
+    "10_valuation": TTL_INTRADAY,
+    "11_governance": TTL_QUARTERLY,
+    "12_capital_flow": TTL_INTRADAY,
+    "13_policy": TTL_HOURLY,
+    "14_moat": TTL_QUARTERLY,
+    "15_events": TTL_HOURLY,
+    "16_lhb": TTL_DAILY,
+    "17_sentiment": TTL_INTRADAY,
+    "18_trap": TTL_INTRADAY,
+    "19_contests": TTL_HOURLY,
+    "similar_stocks": TTL_QUARTERLY,
+}
 
 
 def _make_adapter(
@@ -41,10 +68,14 @@ def _make_adapter(
         depends_on=depends_on or [],
         markets=markets,
         sources=sources or [f"legacy:{legacy_module}"],
+        cache_ttl_sec=_TTL_BY_DIM.get(dim_key, TTL_INTRADAY),
     )
     kzf = keep_zero_fields or set()
 
     def _fetch_raw(self, ticker, raw=None):
+        self._actual_source = None
+        self._legacy_fallback = False
+        self._legacy_error = None
         mod = importlib.import_module(self._legacy_module)
         args = self._args_fn(ticker, raw or {})
         result = mod.main(*args)
@@ -52,6 +83,9 @@ def _make_adapter(
         # 1. {"ticker": ..., "data": {...}, "source": ..., "fallback": bool}
         # 2. 裸 dict（fetch_macro / fetch_policy / fetch_industry）
         if isinstance(result, dict) and "data" in result and isinstance(result["data"], dict):
+            self._actual_source = result.get("source")
+            self._legacy_fallback = bool(result.get("fallback"))
+            self._legacy_error = result.get("error")
             return result["data"]
         return result if isinstance(result, dict) else {}
 

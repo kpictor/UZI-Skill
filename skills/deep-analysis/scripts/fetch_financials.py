@@ -730,15 +730,25 @@ def _fetch_us(ti) -> dict:
             q_label = rev_q_label or np_q_label
             if q_dt and (latest_dt is None or q_dt > latest_dt) and (rev_ttm is not None or np_ttm is not None):
                 if rev_ttm is not None:
-                    out.setdefault("revenue_history", []).append(rev_ttm)
                     out["revenue_ttm"] = rev_ttm
                 if np_ttm is not None:
-                    out.setdefault("net_profit_history", []).append(np_ttm)
                     out["net_profit_ttm"] = np_ttm
-                out.setdefault("financial_years", []).append(f"TTM {q_label}")
                 out["financial_period"] = q_label
                 out["financial_basis"] = "TTM"
                 latest_dt = q_dt
+
+            revenue_growth = info.get("revenueGrowth")
+            if revenue_growth is not None and math.isfinite(float(revenue_growth)):
+                out["revenue_growth_yoy"] = round(float(revenue_growth) * 100, 2)
+                out["revenue_growth_period"] = q_label or latest_label
+                out["revenue_growth_basis"] = "reported_yoy"
+                out["revenue_growth_source"] = "yfinance.info:revenueGrowth"
+            earnings_growth = info.get("earningsGrowth")
+            if earnings_growth is not None and math.isfinite(float(earnings_growth)):
+                out["net_profit_growth_yoy"] = round(float(earnings_growth) * 100, 2)
+                out["net_profit_growth_period"] = q_label or latest_label
+                out["net_profit_growth_basis"] = "reported_yoy"
+                out["net_profit_growth_source"] = "yfinance.info:earningsGrowth"
 
             _apply_financial_staleness(out, latest_dt)
         out["roe"] = f"{info.get('returnOnEquity', 0) * 100:.1f}%" if info.get("returnOnEquity") else "—"
@@ -788,10 +798,15 @@ def main(ticker: str) -> dict:
         error = f"{type(e).__name__}: {e}"
         traceback.print_exc(file=sys.stderr)
 
+    source_by_market = {
+        "A": "akshare:stock_financial_abstract + indicator + cash_flow + dividend_detail",
+        "H": "akshare:stock_financial_hk_report_em",
+        "U": "yfinance:financials + quarterly_financials + balance_sheet + info",
+    }
     return {
         "ticker": ti.full,
         "data": data,
-        "source": "akshare:stock_financial_abstract + indicator + cash_flow + dividend_detail",
+        "source": source_by_market.get(ti.market, "unknown"),
         "fallback": not bool(data),
         "error": error,
     }

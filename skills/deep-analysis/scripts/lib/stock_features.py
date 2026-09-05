@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import re
+import math
 from typing import Any
 
 
@@ -142,7 +143,12 @@ def extract_features(raw: dict, dims: dict) -> dict:
     f["roe_5y_above_10"] = sum(1 for v in roe_hist[-5:] if _f(v) > 10)
     f["roe_trend_up"] = _last(roe_hist) > _avg(roe_hist[:-1]) if len(roe_hist) >= 3 else False
 
-    f["revenue_latest_yi"] = _last(rev_hist)
+    revenue_ttm = _f(fin.get("revenue_ttm"), None)
+    profit_ttm = _f(fin.get("net_profit_ttm"), None)
+    revenue_ttm = revenue_ttm if revenue_ttm is not None and math.isfinite(revenue_ttm) else None
+    profit_ttm = profit_ttm if profit_ttm is not None and math.isfinite(profit_ttm) else None
+    f["revenue_latest_yi"] = revenue_ttm if revenue_ttm is not None else _last(rev_hist)
+    f["revenue_latest_basis"] = "ttm" if revenue_ttm is not None else "annual"
     explicit_revenue_yoy = fin.get("revenue_growth_yoy")
     f["revenue_growth_latest"] = (
         _f(explicit_revenue_yoy)
@@ -154,18 +160,34 @@ def extract_features(raw: dict, dims: dict) -> dict:
     f["revenue_growth_source"] = fin.get("revenue_growth_source")
     f["revenue_growth_3y_cagr"] = ((_last(rev_hist) / _f(rev_hist[-4])) ** (1/3) - 1) * 100 if len(rev_hist) >= 4 and _f(rev_hist[-4]) > 0 else 0
 
-    f["net_profit_latest_yi"] = _last(np_hist)
-    f["net_profit_growth_latest"] = _pct_change(np_hist, 1)
+    f["net_profit_latest_yi"] = profit_ttm if profit_ttm is not None else _last(np_hist)
+    f["net_profit_latest_basis"] = "ttm" if profit_ttm is not None else "annual"
+    explicit_profit_yoy = fin.get("net_profit_growth_yoy")
+    f["net_profit_growth_latest"] = (
+        _f(explicit_profit_yoy)
+        if explicit_profit_yoy is not None
+        else _pct_change(np_hist, 1)
+    )
+    f["net_profit_growth_period"] = fin.get("net_profit_growth_period")
+    f["net_profit_growth_basis"] = fin.get("net_profit_growth_basis")
+    f["net_profit_growth_source"] = fin.get("net_profit_growth_source")
     f["net_profit_5y_positive"] = sum(1 for v in np_hist[-5:] if _f(v) > 0)
     f["consecutive_profit_years"] = len([v for v in np_hist if _f(v) > 0])
 
-    # Net margin (derived: np / revenue)
-    if _last(rev_hist) > 0 and _last(np_hist) > 0:
-        f["net_margin"] = round(_last(np_hist) / _last(rev_hist) * 100, 1)
+    # Ratios require a matching period; zero and losses are valid observations.
+    if revenue_ttm is not None and profit_ttm is not None:
+        margin_rev, margin_profit, margin_basis = revenue_ttm, profit_ttm, "ttm"
+    elif rev_hist and np_hist and len(rev_hist) == len(np_hist):
+        margin_rev, margin_profit = _last(rev_hist, None), _last(np_hist, None)
+        margin_basis = "annual"
     else:
-        # Try from raw
-        nm_raw = fin.get("net_margin")
-        f["net_margin"] = _f(nm_raw) if nm_raw else 0
+        margin_rev, margin_profit, margin_basis = None, None, "unavailable"
+    if margin_rev is not None and margin_rev > 0 and margin_profit is not None:
+        f["net_margin"] = round(margin_profit / margin_rev * 100, 1)
+        f["net_margin_basis"] = margin_basis
+    else:
+        f["net_margin"] = _f(fin.get("net_margin"), None)
+        f["net_margin_basis"] = "reported" if f["net_margin"] is not None else "unavailable"
 
     # Financial health
     health = fin.get("financial_health") or {}

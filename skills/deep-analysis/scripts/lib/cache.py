@@ -16,8 +16,10 @@ import hashlib
 import json
 import os
 import time
+from datetime import datetime, time as dt_time
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 # Tiered TTL constants (seconds)
 TTL_REALTIME    = 60          # 1 minute — price snapshot
@@ -64,30 +66,67 @@ def cached(ticker: str, key: str, fetch_fn: Callable[[], Any], ttl: int = CACHE_
     return data
 
 
-def market_status() -> dict:
-    """Return current A-share market status: open/closed + next event.
-    Used to label data freshness in the report header.
-    """
-    from datetime import datetime, time as dt_time
-    now = datetime.now()
-    weekday = now.weekday()  # 0=Mon, 6=Sun
-    t = now.time()
+_MARKET_CLOCKS = {
+    "A": ("Asia/Shanghai", "XSHG", ((dt_time(9, 30), dt_time(11, 30)), (dt_time(13, 0), dt_time(15, 0)))),
+    "H": ("Asia/Hong_Kong", "XHKG", ((dt_time(9, 30), dt_time(12, 0)), (dt_time(13, 0), dt_time(16, 0)))),
+    "U": ("America/New_York", "XNYS", ((dt_time(9, 30), dt_time(16, 0)),)),
+}
+
+
+def market_status(market: str = "A", now: datetime | None = None) -> dict:
+    """Return exchange-aware market status for A/H/US equities."""
+    market = str(market or "A").upper()
+    if market in ("US", "USA"):
+        market = "U"
+    timezone_name, calendar_name, sessions = _MARKET_CLOCKS.get(market, _MARKET_CLOCKS["A"])
+    tz = ZoneInfo(timezone_name)
+    if now is None:
+        local_now = datetime.now(tz)
+    elif now.tzinfo is None:
+        local_now = now.replace(tzinfo=tz)
+    else:
+        local_now = now.astimezone(tz)
+    weekday = local_now.weekday()
+    t = local_now.time().replace(tzinfo=None)
+    calendar_verified = False
+
+    try:
+        import pandas as pd
+        import exchange_calendars as xcals
+
+        calendar = xcals.get_calendar(calendar_name)
+        session = pd.Timestamp(local_now.date())
+        calendar_verified = True
+        if not calendar.is_session(session):
+            return {
+                "is_open": False,
+                "label": "已休市 (非交易日)",
+                "now": local_now.isoformat(timespec="seconds"),
+                "market": market,
+                "timezone": timezone_name,
+                "calendar_verified": True,
+            }
+    except (ImportError, ModuleNotFoundError, ValueError, TypeError):
+        pass
 
     if weekday >= 5:
-        return {"is_open": False, "label": "已收盘 (周末)", "now": now.isoformat(timespec="seconds")}
-
-    morning_open = dt_time(9, 30)
-    morning_close = dt_time(11, 30)
-    afternoon_open = dt_time(13, 0)
-    afternoon_close = dt_time(15, 0)
-
-    if morning_open <= t < morning_close or afternoon_open <= t < afternoon_close:
-        return {"is_open": True, "label": "交易中", "now": now.isoformat(timespec="seconds")}
-    if morning_close <= t < afternoon_open:
-        return {"is_open": False, "label": "午间休市", "now": now.isoformat(timespec="seconds")}
-    if t < morning_open:
-        return {"is_open": False, "label": "未开盘", "now": now.isoformat(timespec="seconds")}
-    return {"is_open": False, "label": "已收盘", "now": now.isoformat(timespec="seconds")}
+        label, is_open = "已收盘 (周末)", False
+    elif any(start <= t < end for start, end in sessions):
+        label, is_open = "交易中", True
+    elif len(sessions) > 1 and sessions[0][1] <= t < sessions[1][0]:
+        label, is_open = "午间休市", False
+    elif t < sessions[0][0]:
+        label, is_open = "未开盘", False
+    else:
+        label, is_open = "已收盘", False
+    return {
+        "is_open": is_open,
+        "label": label,
+        "now": local_now.isoformat(timespec="seconds"),
+        "market": market,
+        "timezone": timezone_name,
+        "calendar_verified": calendar_verified,
+    }
 
 
 def write_task_output(ticker: str, task_name: str, data: dict) -> Path:

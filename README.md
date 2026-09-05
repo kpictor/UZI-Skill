@@ -57,8 +57,9 @@ A 股 / 港股 / 美股 · 个股深度分析引擎 · **66 位评审团 × 9 �
 > - **Serenity 严谨化**（v3.8）：8 罚分因子 + 3 级证据阶梯（"有定点量产"≈90 分 vs "仅题材"≈60 分）+ 供应链 8 层分层
 > - **Tier-1 五方法**（v3.8）：`/ai-readiness` `/earnings-preview` `/model-update` `/returns` `/rebalance`
 > - **多股对比 & 组合**（v3.6）：`--versus` 2-4 只横向对决 · `--portfolio` CSV 组合健康度 · 暗色模式 + sticky TOC（v3.9.1 起可一键折叠）+ 术语悬浮
+> - **A+港股每日观察榜**：过滤 ST/无有效报价/成交额不足 2 亿标的 · 24 位游资规则初筛 + Serenity 证据检查 · 最多 10 只、不凑数 · JSON 快照 + HTML + 观察账本
 > - **流派视角锁定**（v3.5）：`--school A-I` 只看一派的判断 · 报告带 SCHOOL LOCK banner
-> - **架构**：v3.0 pipeline 默认主干 · 685 tests 全过 · v2.x API 100% 向后兼容（`UZI_LEGACY=1` 回老路径）
+> - **架构**：v3.0 pipeline 默认主干 · 离线 pytest 回归覆盖 · v2.x API 100% 向后兼容（`UZI_LEGACY=1` 回老路径）
 >
 > **Hermes 用户**：`hermes skills install` 被上游 Skills Guard 误判 · 用一键脚本装：`curl -fsSL https://raw.githubusercontent.com/wbh604/UZI-Skill/main/install-hermes.sh | bash` · 详见 [INSTALL-HERMES.md](INSTALL-HERMES.md).
 
@@ -236,7 +237,34 @@ python run.py --portfolio holdings.csv             # CSV 组合 · 加权评分 
 python run.py 600519.SH --output-dir /tmp/out      # SaaS 集成 · index.html + meta.json
 python run.py 600519.SH --remote                   # 公网链接 · 缺 cloudflared 时默认不改系统
 python run.py 601238.SH --from-modeling            # 采集后建模崩溃 · 从 raw_data.json 秒级续跑
+python screen.py --mode noon --markets A,H --top 10 --no-browser
+python run.py --screen daily --mode close --snapshot-only --no-browser
 ```
+
+### A+港股每日观察榜
+
+`screen.py` 是全市场扫描，不等同于单只股票的 `/stock-deep-analyzer:screen <ticker>`。默认抓取 A 股和港股实时横截面，过滤 ST、退市整理、无有效报价和实际成交额低于 2 亿本币的标的，再生成规则初筛观察结果。默认增强行业、结构化消息、盘口及分钟线；当前仍不是 Agent role-play，也不保证实际成交，不会单凭高分给出执行信号。
+
+```bash
+python screen.py --mode noon --markets A,H --schools F,I --top 10 --no-browser
+python screen.py --mode close --markets A,H --schools F,I --top 10 --no-browser
+python screen.py --mode noon --snapshot-only --no-browser  # 网络受限时只用行情横截面
+```
+
+- `--top 10` 是上限，不是配额；低于 70 分的研究候选不会为凑数入榜。
+- `--mode noon/close` 不会把实时行情变成历史快照。报告记录实际观测时间；下午运行会显示下午时点，不会回写成上午。历史 Python 调用必须显式提供冻结快照，并禁止混入实时消息。
+- 行情接口未提供行业时，行业排名保持缺失，不把“未分类”当作第一主线；A/H 分别计算行业排名，板块宽度基于成交额过滤前的样本。
+- 缺少行业、可核验消息或分时成交证据时一律降为观察。行业来自东财 F10 批量映射（A 股 `EM2016`、港股 `BELONG_INDUSTRY`）；盘口采用腾讯 qt 主源、东财备用；分钟线采用东财主源、腾讯备用。不会按统一 9.7% 涨幅断言不可成交。
+- 时间和单位分开处理：使用接口内的报价时间；A 股腾讯成交额由万元转为元，港股保留港元；腾讯分钟累计成交额转为单分钟增量。币种或股票代码不匹配、分钟线与报价不一致时不放行。
+- 条件门禁：发布时重新检查报价不超过 120 秒、行业快照不超过 300 秒、行业覆盖率至少 95%、交易日历确认开市、有双边盘口及最近连续三分钟的有效成交；公司相关消息须有出处链接及最近 72 小时的有效发布时间。还会检查买卖价差、VWAP 与价格关系，并在刷新行情后重新执行用户设置的成交额门槛。上述数值是保守的数据/交易条件阈值，不是经回测验证的盈利策略参数。
+- HTML 展开区显示行业、盘口、分钟线的来源与报价时间，以及消息原文链接和数据源异常；只有全部条件满足才显示“数据条件通过，待成交确认”，不等于已核验成交或已完成定性研判。
+- 公共港股行情可能延迟或缺少买卖盘数量；不能仅凭 HTTP 成功解除限制。需要更稳定的实时盘口时须配置合规实时数据源，当前未自动购买行情或连接交易账户。
+- 港股没有 A 股涨停板、T+1 和龙虎榜人物生态，F 组统一 `skip`；Serenity 可正常评估。
+- 不使用晚于快照时点、时间无法核验的消息，以及当日龙虎榜。席位只作历史资金风格线索，不代替订单、量产等业务证据，也不宣称某自然人实际参与。
+- 输出位于 `skills/deep-analysis/scripts/reports/screens/<date>/<report-id>/`，包含 `picks.json`、`report.meta.json`、`index.html`。
+- 账本追加到 `skills/deep-analysis/scripts/.cache/_daily_screen/signals.jsonl`。规则分未经概率校准，不是胜率；账本当前只记录候选，尚未完成收益追踪和样本外验证。
+
+deep 档另有强制 role-play 门禁：`run.py --depth deep` 只执行 Stage 1。Agent 必须读取当前股票缓存中的 `_agent_review_context.json`，把 `analysis_input_hash` 写入 `agent_analysis.json` 后才能调用 Stage 2；旧快照的角色判断不会被复用。
 
 ---
 
@@ -679,7 +707,7 @@ UZI-Skill/
 │   │       ├── assemble_report.py      # HTML shell (v3.2 瘦身 587 行)
 │   │       ├── fetch_*.py              # 22 fetcher · 也是独立 CLI
 │   │       ├── compute_deep_methods.py # 机构建模
-│   │       ├── tests/                  # 642 pytest
+│   │       ├── tests/                  # pytest regression suite
 │   │       └── lib/
 │   │           ├── pipeline/           # 🆕 v3.0 管道式架构（默认路径）
 │   │           │   ├── run.py          # run_pipeline 编排入口

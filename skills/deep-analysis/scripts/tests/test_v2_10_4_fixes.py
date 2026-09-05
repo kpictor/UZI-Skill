@@ -19,6 +19,13 @@ sys.path.insert(0, str(ROOT))
 
 # ─── Fix 1 & 3: self-review profile-aware ───
 
+@pytest.fixture(autouse=True)
+def isolate_profile_environment(monkeypatch):
+    # Test agent/CLI modes explicitly instead of inheriting GitHub's batch mode.
+    for key in ("CI", "UZI_DEPTH", "UZI_LITE", "UZI_CLI_ONLY"):
+        monkeypatch.delenv(key, raising=False)
+
+
 def _make_dims(nums):
     return {f"{n}_fake": {"data": {"ok": True}} for n in nums}
 

@@ -18,6 +18,8 @@ assemble_report.py 做 re-export · 所有历史调用不变.
 """
 from __future__ import annotations
 
+from lib.report.security import escape_payload, safe_asset_id
+
 
 def _safe(v, default="—"):
     """local helper · 避免循环 import assemble_report."""
@@ -32,10 +34,11 @@ GROUP_LABELS = {"A": "价值", "B": "成长", "C": "宏观", "D": "技术", "E":
 
 def render_jury_seat(inv: dict) -> str:
     """One judge seat on the judging board (50 灯). Click → scroll to chat message."""
+    inv = escape_payload(inv)
     sig = inv.get("signal", "neutral")
     name = (inv.get("name") or "")[:4]
     score = inv.get("score", 0)
-    inv_id = inv["investor_id"]
+    inv_id = safe_asset_id(inv.get("investor_id"))
     return f'''<div class="seat {sig}" data-group="{inv.get("group", "")}" data-target="msg-{inv_id}" title="{inv.get("name", "")} · {inv.get("verdict", "")} · 点击查看完整结论">
   <img src="avatars/{inv_id}.svg" class="seat-avatar" alt="">
   <div class="seat-name">{name}</div>
@@ -58,6 +61,7 @@ def _li(items: list) -> str:
 
 def render_chat_message(inv: dict) -> str:
     """One chat bubble + expandable full conclusion."""
+    inv = escape_payload(inv)
     sig = inv.get("signal", "neutral")
     group = inv.get("group", "")
     group_label = GROUP_LABELS.get(group, group)
@@ -70,7 +74,7 @@ def render_chat_message(inv: dict) -> str:
     fail_items = inv.get("fail") or []
     ideal_price = inv.get("ideal_price")
     period = _safe(inv.get("period"), "—")
-    inv_id = inv["investor_id"]
+    inv_id = safe_asset_id(inv.get("investor_id"))
 
     bubble_main = f'<div class="msg-reasoning">{reasoning}</div>'
     if comment and comment != reasoning:
@@ -158,6 +162,8 @@ def render_top3_bears(investors: list[dict]) -> str:
 
 def _render_top3_by_signal(investors: list[dict], target_signal: str, empty_msg: str) -> str:
     """v2.9.1 · 提取公共逻辑 + 空时给友好提示而不是 3 个空 div"""
+    investors = escape_payload(investors)
+    empty_msg = escape_payload(empty_msg)
     hits = sorted(
         [i for i in investors if i.get("signal") == target_signal and i.get("mandate") != "short"],
         key=lambda x: x.get("score", 0),
@@ -173,7 +179,7 @@ def _render_top3_by_signal(investors: list[dict], target_signal: str, empty_msg:
     for inv in hits:
         cells.append(
             f'<div class="sc-best-cell">'
-            f'<img src="avatars/{inv["investor_id"]}.svg">'
+            f'<img src="avatars/{safe_asset_id(inv.get("investor_id"))}.svg">'
             f'<div class="name">{inv.get("name")}</div>'
             f'<div class="score-num">{inv.get("score", 0)}</div>'
             f"</div>"
@@ -188,4 +194,5 @@ def _render_top3_by_signal(investors: list[dict], target_signal: str, empty_msg:
 
 
 def render_risks(risks: list[str]) -> str:
+    risks = escape_payload(risks)
     return "\n".join(f"<li>{r}</li>" for r in risks)

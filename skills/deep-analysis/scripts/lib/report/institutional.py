@@ -26,8 +26,6 @@ assemble_report.py 做 `from lib.report.institutional import *` · 调用不变.
 """
 from __future__ import annotations
 
-import html
-
 from lib.report.svg_primitives import (
     COLOR_BULL, COLOR_BEAR, COLOR_GOLD, COLOR_CYAN, COLOR_MUTED,
     svg_gauge, svg_progress_row,
@@ -35,6 +33,7 @@ from lib.report.svg_primitives import (
     svg_radar,      # v3.3.3 · PR #54/#59 · _render_competitive_analysis Porter radar 用 · v3.2 拆分时漏 import
 )
 from lib.report.dim_viz import _score_class
+from lib.report.security import escape_payload, escape_text
 
 
 def _safe(v, default="—"):
@@ -78,15 +77,13 @@ def trap_color_emoji(level: str) -> tuple[str, str]:
 
 def _render_dcf_block(dim20: dict) -> str:
     """DCF methodology + WACC breakdown + sensitivity heatmap."""
+    dim20 = escape_payload(dim20)
     dcf = (dim20 or {}).get("dcf") or {}
     if not dcf or "intrinsic_per_share" not in dcf:
         return '<div class="dcf-block"><p class="muted">DCF 数据缺失</p></div>'
 
     if dcf.get("intrinsic_per_share") is None:
-        verdict = html.escape(
-            str(_safe(dcf.get("verdict"), "亏损期自由现金流为负，DCF 无法收敛")),
-            quote=True,
-        )
+        verdict = escape_text(_safe(dcf.get("verdict"), "亏损期自由现金流为负，DCF 无法收敛"))
         return (
             '<div class="dcf-block"><p class="muted">'
             f'DCF 暂不可用：{verdict}。亏损期请结合 PB 分位、LBO 与 Comps 估值交叉判断。'
@@ -178,6 +175,7 @@ def _render_dcf_block(dim20: dict) -> str:
 
 
 def _render_comps_block(dim20: dict) -> str:
+    dim20 = escape_payload(dim20)
     comps = (dim20 or {}).get("comps") or {}
     if not comps or "peer_stats" not in comps:
         return '<div class="comps-block"><p class="muted">Comps 同行数据缺失</p></div>'
@@ -237,6 +235,7 @@ def _render_comps_block(dim20: dict) -> str:
 
 
 def _render_lbo_block(dim20: dict) -> str:
+    dim20 = escape_payload(dim20)
     lbo = (dim20 or {}).get("lbo") or {}
     if not lbo:
         return ""
@@ -273,6 +272,7 @@ def _render_lbo_block(dim20: dict) -> str:
 
 
 def _render_initiating_coverage(dim21: dict) -> str:
+    dim21 = escape_payload(dim21)
     ic = (dim21 or {}).get("initiating_coverage") or {}
     if not ic: return ""
     head = ic.get("headline") or {}
@@ -331,6 +331,7 @@ def _render_initiating_coverage(dim21: dict) -> str:
 
 
 def _render_ic_memo(dim22: dict) -> str:
+    dim22 = escape_payload(dim22)
     ic = (dim22 or {}).get("ic_memo") or {}
     sections = ic.get("sections") or {}
     exec_sum = sections.get("I_exec_summary") or {}
@@ -384,6 +385,7 @@ def _render_ic_memo(dim22: dict) -> str:
 
 
 def _render_catalyst_calendar(dim21: dict) -> str:
+    dim21 = escape_payload(dim21)
     cat = (dim21 or {}).get("catalyst_calendar") or {}
     events = cat.get("events") or []
     if not events: return ""
@@ -420,6 +422,7 @@ def _render_catalyst_calendar(dim21: dict) -> str:
 
 
 def _render_competitive_analysis(dim22: dict) -> str:
+    dim22 = escape_payload(dim22)
     ca = (dim22 or {}).get("competitive_analysis") or {}
     porter = ca.get("porter_five_forces") or {}
     bcg = ca.get("bcg_position") or {}
@@ -465,6 +468,7 @@ def _render_competitive_analysis(dim22: dict) -> str:
 
 def _render_style_chip(syn: dict) -> str:
     """v2.7 · Render the style identification chip (动态加权说明)."""
+    syn = escape_payload(syn)
     style = syn.get("detected_style")
     if not style:
         return ""
@@ -511,6 +515,9 @@ def _render_data_gap_banner(data_gaps: dict | None, raw: dict | None = None, syn
     渲染 low-confidence banner · 警告"评分受数据缺失影响 · 应以 agent 定性评估为准".
     解决京东方实测 fund_score=37.6 但 agent 重评 65/100 的脱节问题.
     """
+    data_gaps = escape_payload(data_gaps)
+    raw = escape_payload(raw)
+    syn = escape_payload(syn)
     if not isinstance(data_gaps, dict) or not data_gaps.get("tasks"):
         return ""
 
@@ -625,6 +632,7 @@ def _render_data_gap_banner(data_gaps: dict | None, raw: dict | None = None, syn
 
 
 def _render_school_lock_banner(syn: dict | None) -> str:
+    syn = escape_payload(syn)
     """v3.5.0 · 用户用 --school 锁定单一流派视角时 · 报告顶部渲染 banner.
 
     数据源 · syn["school_lock"] = {"group": "F", "label": "A 股游资"}
@@ -679,6 +687,7 @@ def _render_school_lock_banner(syn: dict | None) -> str:
 
 
 def _render_institutional_section(raw: dict) -> str:
+    raw = escape_payload(raw)
     """Combined dim 20/21/22 renderer — returns the full institutional modeling block."""
     dims = raw.get("dimensions", {}) or {}
     d20 = (dims.get("20_valuation_models") or {}).get("data") or {}

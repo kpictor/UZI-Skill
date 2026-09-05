@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import math
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent.parent.parent
@@ -32,6 +33,13 @@ def test_is_empty_value_preserves_zero():
     assert is_empty_value(0) is False   # 0 是有效值
     assert is_empty_value(0.0) is False
     assert is_empty_value(False) is False
+
+
+def test_is_empty_value_rejects_non_finite_numbers():
+    from lib.pipeline import is_empty_value
+    assert is_empty_value(math.nan) is True
+    assert is_empty_value(math.inf) is True
+    assert is_empty_value(-math.inf) is True
 
 
 def test_is_empty_value_preserves_valid_data():
@@ -69,6 +77,12 @@ def test_normalize_data_default_preserves_zero():
     assert out["price"] is None
     assert out["holding_quarters"] == 0
     assert out["name"] == "中密"
+
+
+def test_normalize_data_recurses_into_nested_values():
+    from lib.pipeline.validators import normalize_data
+    out = normalize_data({"nested": {"x": "—", "items": [1, "NaN", math.inf]}})
+    assert out == {"nested": {"x": None, "items": [1, None, None]}}
 
 
 def test_validate_result_sets_quality_full_when_all_filled():
@@ -135,6 +149,15 @@ def test_validate_preserves_error_quality():
     assert r.quality == Quality.ERROR
     r = validate_result(r, spec)
     assert r.quality == Quality.ERROR, "error 状态 validate 不应改写"
+
+
+def test_validate_result_missing_when_spec_has_no_fields_and_payload_is_empty():
+    from lib.pipeline import DimResult, Quality
+    from lib.pipeline.schema import FetcherSpec
+    from lib.pipeline.validators import validate_result
+
+    r = validate_result(DimResult(dim_key="x", data={"nested": {"value": math.nan}}), FetcherSpec(dim_key="x"))
+    assert r.quality == Quality.MISSING
 
 
 def test_quality_score_ratio():

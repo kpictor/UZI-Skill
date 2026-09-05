@@ -22,10 +22,12 @@ from __future__ import annotations  # v2.6 · Python 3.9 兼容（默认 macOS p
 import os
 import sys
 import argparse
+import json
 import subprocess
 import shutil
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
@@ -51,6 +53,36 @@ _layout_candidates = [
 SCRIPTS_DIR = next((c for c in _layout_candidates if c.exists()), _layout_candidates[0])
 sys.path.insert(0, str(SCRIPTS_DIR))
 os.chdir(str(SCRIPTS_DIR))
+
+
+def _pipeline_fallback_marker_path(ticker: str) -> Path:
+    safe = "".join(ch if ch.isalnum() or ch in ".-_" else "_" for ch in str(ticker))[:80]
+    return SCRIPTS_DIR / ".cache" / (safe or "unknown") / "_pipeline_fallback.json"
+
+
+def _write_pipeline_fallback_marker(ticker: str, exc: Exception) -> None:
+    import traceback
+
+    marker = _pipeline_fallback_marker_path(ticker)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "ticker": ticker,
+        "execution_path": "legacy_fallback",
+        "fallback_type": "preflight" if isinstance(exc, ValueError) else "runtime_error",
+        "error_type": type(exc).__name__,
+        "error": str(exc)[:500],
+        "traceback": traceback.format_exc()[-4000:],
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    tmp = marker.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(marker)
+
+
+def _clear_pipeline_fallback_marker(ticker: str) -> None:
+    marker = _pipeline_fallback_marker_path(ticker)
+    if marker.exists():
+        marker.unlink()
 
 
 # ─── .env 加载（v2.3，零依赖，不覆盖已存在的 shell env）──
@@ -465,15 +497,19 @@ def main():
     parser.add_argument("--portfolio", metavar="CSV", default=None,
                         help="v3.6.0 · 组合批量分析 · CSV 列含 ticker / weight / note · "
                              "输出排名 + 加权评分 + 健康度 · 自动 resume")
+    parser.add_argument("--screen", choices=["daily"], default=None,
+                        help="A+港股每日游资/Serenity 全市场筛选")
+    parser.add_argument("--mode", choices=["noon", "close"], default="noon",
+                        help="每日筛选报告模式")
+    parser.add_argument("--markets", default="A,H", help="每日筛选市场，逗号分隔")
+    parser.add_argument("--schools", default="F,I", help="每日筛选角色组，当前固定 F,I")
+    parser.add_argument("--top", type=int, default=10, help="每日候选上限，最多 10 只")
+    parser.add_argument("--min-turnover", type=float, default=2e8, help="最低实际成交额（本币）")
+    parser.add_argument("--snapshot-only", action="store_true", help="每日筛选仅用行情横截面，不抓逐股增强")
     parser.add_argument("--output-dir", metavar="DIR", default=None,
                         help="v2.11.0 · SaaS 集成：把产出（standalone html + 图 + 摘要）拷贝到该目录，并在其中生成 index.html / report.meta.json。建议配合 --no-browser 使用。")
     args = parser.parse_args()
     args._direct_report_path = None
-
-    # v2.10.5 · run.py 是 CLI 直跑入口（agent 流程走 stage1/stage2 直接调用，不经 run.py）。
-    # 设 UZI_CLI_ONLY=1 让 self_review 对 agent_analysis.json 缺失 / 低 coverage 做宽容处理
-    # （降级为 warning，仍出报告）。
-    os.environ.setdefault("UZI_CLI_ONLY", "1")
 
     # v2.14.0 · 自动检测 GitHub 新版本 · interactive prompt(y/s/n) · 非 TTY 静默
     _maybe_prompt_update()
@@ -487,6 +523,12 @@ def main():
         print(f"\n{format_banner(profile)}\n")
     except Exception as _e:
         print(f"⚠️ 无法加载 analysis_profile: {_e}")
+
+    # lite/medium 允许 CLI 规则报告；deep 必须停在 Stage 1 等待 Agent role-play。
+    if os.environ.get("UZI_DEPTH") == "deep":
+        os.environ.pop("UZI_CLI_ONLY", None)
+    else:
+        os.environ.setdefault("UZI_CLI_ONLY", "1")
 
     # v2.3 · --force-name 直接覆盖
     if args.force_name:
@@ -505,6 +547,22 @@ def main():
                          "E": "中国价投", "F": "A 股游资", "G": "量化",
                          "H": "科技领袖派", "I": "Serenity · AI 卡位/瓶颈猎手"}
         print(f"🎯 已锁定 {args.school} 派视角 · {_SCHOOL_NAMES.get(args.school, args.school)} · 其他派评委 skip")
+
+    if args.screen == "daily":
+        from screen import main as screen_main
+        screen_args = [
+            "--mode", args.mode,
+            "--markets", args.markets,
+            "--schools", args.schools,
+            "--top", str(args.top),
+            "--min-turnover", str(args.min_turnover),
+        ]
+        if args.snapshot_only:
+            screen_args.append("--snapshot-only")
+        if args.no_browser:
+            screen_args.append("--no-browser")
+        screen_main(screen_args)
+        sys.exit(0)
 
     # v3.6.0 · 横向对比模式 · 不走单股分析，但仍进入统一 post-process
     if args.versus:
@@ -604,6 +662,17 @@ def main():
         stage2 as _stage2,
     )
 
+    if os.environ.get("UZI_DEPTH") == "deep":
+        deep_result = _stage1_modeling(args.ticker) if args.from_modeling else _stage1(args.ticker)
+        if not isinstance(deep_result, dict) or not deep_result.get("ticker"):
+            print(f"❌ deep 档 Stage 1 未完成: {deep_result}")
+            sys.exit(2)
+        resolved_ticker = deep_result["ticker"]
+        print(f"\n⏸️  deep 档已停在 Agent role-play 门禁 · {resolved_ticker}")
+        print(f"   读取 .cache/{resolved_ticker}/_agent_review_context.json 和 panel.json")
+        print("   完成逐评委分析并写入匹配指纹的 agent_analysis.json 后，再调用 stage2()")
+        sys.exit(3)
+
     _pipeline_succeeded = False
     _modeling_succeeded = False
     _force_legacy = os.environ.get("UZI_LEGACY") == "1"
@@ -620,11 +689,13 @@ def main():
             from lib.pipeline.run import run_pipeline
             print("🚀 [run.py] v3.0.0 pipeline · 默认路径")
             run_pipeline(args.ticker, resume=not args.no_resume)
+            _clear_pipeline_fallback_marker(args.ticker)
             _pipeline_succeeded = True
         except Exception as e:
             print(f"⚠️  [run.py] pipeline 异常 · 回退 legacy: {type(e).__name__}: {str(e)[:100]}")
             import traceback
             traceback.print_exc()
+            _write_pipeline_fallback_marker(args.ticker, e)
             _pipeline_succeeded = False
 
     # v2.3 · 先过 stage1，捕获中文名解析失败场景，不静默跑出空报告

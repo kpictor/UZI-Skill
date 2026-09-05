@@ -14,6 +14,7 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 from lib.cache import read_task_output, market_status  # noqa: E402
+from lib.report.security import escape_payload, escape_text  # noqa: E402
 
 ROOT = HERE.parent
 TEMPLATE = ROOT / "assets" / "report-template.html"
@@ -40,6 +41,25 @@ def _get_plugin_version() -> str:
         pass
     _PLUGIN_VERSION_CACHE = "?"
     return _PLUGIN_VERSION_CACHE
+
+
+def _render_pipeline_fallback_banner(ticker: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in ".-_" else "_" for ch in str(ticker))[:80]
+    marker = HERE / ".cache" / (safe or "unknown") / "_pipeline_fallback.json"
+    if not marker.exists():
+        return ""
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    error_type = escape_text(payload.get("error_type", "PipelineError"))
+    message = escape_text(payload.get("error", "未知错误"))
+    created_at = escape_text(payload.get("created_at", ""))
+    return f'''<div class="pipeline-fallback-banner" style="margin:12px 0;padding:12px 16px;border:1px solid #f59e0b;background:#fffbeb;color:#92400e;font-size:12px">
+  <strong>执行路径降级：</strong>本报告由 legacy 流程生成，pipeline 未完整执行。
+  <span style="margin-left:8px">{error_type}: {message}</span>
+  <span style="margin-left:8px;color:#a16207">{created_at}</span>
+</div>'''
 
 
 
@@ -214,6 +234,8 @@ def _extract_kpi_value(raw_dim_data: dict, key: str) -> str:
 
 def render_dim_card(dim_key: str, dim_score: dict, raw_dim: dict) -> str:
     """Render one dimension card (data-driven from DIM_META)."""
+    dim_score = escape_payload(dim_score)
+    raw_dim = escape_payload(raw_dim)
     meta = DIM_META.get(dim_key)
     if not meta:
         return ""
@@ -277,6 +299,7 @@ def render_dim_card(dim_key: str, dim_score: dict, raw_dim: dict) -> str:
     raw_dump = _j.dumps(raw_data, ensure_ascii=False, indent=2, default=str)
     if len(raw_dump) > 1500:
         raw_dump = raw_dump[:1500] + "\n... (truncated)"
+    raw_dump = escape_text(raw_dump)
 
     return f'''<div class="dim-card" data-dim="{meta["id"]}">
   <div class="dim-head">
@@ -345,6 +368,10 @@ def assemble(ticker: str) -> Path:
     if not (syn and raw and panel):
         raise RuntimeError(f"Missing prerequisite cache for {ticker}. Run Tasks 1-4 first.")
 
+    syn = escape_payload(syn)
+    raw = escape_payload(raw)
+    panel = escape_payload(panel)
+
     # v2.9 · 机械级自查 gate（代替以往"软 HARD-GATE"）
     # HTML 生成前强制跑 self_review；critical != 0 → 拒绝出报告，让 agent 修
     # 环境变量 UZI_SKIP_REVIEW=1 可临时跳过（仅限开发调试，不该生产用）
@@ -403,6 +430,7 @@ def assemble(ticker: str) -> Path:
 
     template = TEMPLATE.read_text(encoding="utf-8")
 
+    market_state = market_status(_mkt)
     replacements = {
         "{{NAME}}": _safe(syn.get("name") or basic.get("name")),
         "{{TICKER}}": _safe(syn.get("ticker") or basic.get("code")),
@@ -466,13 +494,13 @@ def assemble(ticker: str) -> Path:
         "{{BULL_SIGNAL_CN}}": {"bullish": "看多", "neutral": "中性", "bearish": "看空"}.get(divide.get("bull_signal", ""), "看多"),
         "{{BEAR_SIGNAL_CN}}": {"bullish": "看多", "neutral": "中性", "bearish": "看空"}.get(divide.get("bear_signal", ""), "看空"),
         "{{TOTAL_COUNT}}": str(len(investors)),
-        "{{MARKET_STATUS}}": market_status().get("label", ""),
-        "{{MARKET_STATUS_CLASS}}": "open" if market_status().get("is_open") else "closed",
+        "{{MARKET_STATUS}}": market_state.get("label", ""),
+        "{{MARKET_STATUS_CLASS}}": "open" if market_state.get("is_open") else "closed",
         "{{DATA_FETCHED_AT}}": (raw.get("fetched_at") or "")[:19].replace("T", " "),
         "{{PLUGIN_VERSION}}": _get_plugin_version(),
     }
     for k, v in replacements.items():
-        template = template.replace(k, str(v))
+        template = template.replace(k, escape_text(v))
 
     template = template.replace(
         "<!-- INJECT_JURY_SEATS -->",
@@ -542,7 +570,7 @@ def assemble(ticker: str) -> Path:
     )
 
     # 19 维深度数据卡 · 6 大类
-    dimensions = read_task_output(ticker, "dimensions") or {}
+    dimensions = escape_payload(read_task_output(ticker, "dimensions") or {})
     template = template.replace("<!-- INJECT_DIM_FINANCIAL -->", render_dim_category("fin", dimensions, raw))
     template = template.replace("<!-- INJECT_DIM_MARKET -->",    render_dim_category("mkt", dimensions, raw))
     template = template.replace("<!-- INJECT_DIM_INDUSTRY -->",  render_dim_category("ind", dimensions, raw))
@@ -579,9 +607,10 @@ def assemble(ticker: str) -> Path:
     # v3.5.0 · 在 data_gap_banner 上方追加 school_lock_banner（用户锁定流派视角）
     school_lock_html = _render_school_lock_banner(syn)
     data_gap_html = _render_data_gap_banner(syn.get("data_gaps"), raw=raw, syn=syn)
+    pipeline_fallback_html = _render_pipeline_fallback_banner(ticker)
     template = template.replace(
         "<!-- INJECT_DATA_GAP_BANNER -->",
-        school_lock_html + data_gap_html,
+        pipeline_fallback_html + school_lock_html + data_gap_html,
     )
 
     # v2.7 · Style chip (动态加权说明，只在 detected_style 存在时渲染)

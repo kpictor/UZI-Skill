@@ -147,6 +147,7 @@ def _try_news(code: str) -> list[dict]:
                 "title": title,
                 "type": "新闻",
                 "source": str(r.get("文章来源", "")),
+                "url": str(r.get("新闻链接", "")),
             })
             if len(rows) >= 12:
                 break

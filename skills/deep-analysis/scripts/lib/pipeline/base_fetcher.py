@@ -72,6 +72,15 @@ class BaseFetcher(ABC):
                 source=_first_source(self.spec),
             )
 
+        actual_source = getattr(self, "_actual_source", None) or _first_source(self.spec)
+        legacy_error = getattr(self, "_legacy_error", None)
+        if legacy_error and not raw_data:
+            return DimResult.error_result(
+                dim_key=self.spec.dim_key,
+                error=str(legacy_error),
+                source=actual_source,
+            )
+
         # Normalize · 空值 → None
         normalized = normalize_data(raw_data, keep_zero_fields=self.keep_zero_fields)
 
@@ -80,7 +89,7 @@ class BaseFetcher(ABC):
         result = DimResult(
             dim_key=self.spec.dim_key,
             data={k: v for k, v in normalized.items() if k not in top_level},
-            source=_first_source(self.spec),
+            source=actual_source,
             quality=Quality.MISSING,  # validator 会改
             top_level_fields=top_level,
             latency_ms=int((time.time() - t0) * 1000),

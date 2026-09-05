@@ -594,6 +594,8 @@ def _run_modeling_and_scoring(ti, raw: dict) -> dict:
     print("\n🎭 Task 3 · 评委规则引擎（骨架分）")
     panel = generate_panel(dims, raw)
     write_task_output(ti.full, "panel", panel)
+    from lib.agent_review import write_review_context
+    review_context = write_review_context(_cache.CACHE_ROOT / ti.full, raw)
     distribution = panel["signal_distribution"]
     skip_n = distribution.get("skip", 0)
     active_n = panel.get(
@@ -614,6 +616,7 @@ def _run_modeling_and_scoring(ti, raw: dict) -> dict:
     print(f"   数据: .cache/{ti.full}/raw_data.json")
     print(f"   评分: .cache/{ti.full}/dimensions.json")
     print(f"   评委: .cache/{ti.full}/panel.json")
+    print(f"   输入指纹: {review_context['analysis_input_hash']}")
     print("")
     print("   ⏸️  deep 档此时应由 agent 介入 role-play：")
     print(f"      1. 读取 panel.json 中 {len(INVESTORS)} 人的骨架分")
@@ -626,7 +629,7 @@ def _run_modeling_and_scoring(ti, raw: dict) -> dict:
 
 def stage1_modeling(ticker: str) -> dict:
     """Resume Tasks 1.5-3 from cached ``raw_data.json`` without fetching."""
-    from lib.cache import read_task_output
+    from lib.cache import CACHE_ROOT, read_task_output
 
     ti = _resolve_cached_target(ticker, required_outputs=("raw_data",))
     raw = read_task_output(ti.full, "raw_data")
@@ -757,7 +760,7 @@ def stage2(ticker: str) -> str:
     agent_analysis.json 的字段会合并进 synthesis，优先级高于脚本生成。
     返回报告路径。
     """
-    from lib.cache import read_task_output
+    from lib.cache import CACHE_ROOT, read_task_output
     ti = _resolve_cached_target(
         ticker,
         required_outputs=("raw_data", "dimensions", "panel"),
@@ -770,8 +773,12 @@ def stage2(ticker: str) -> str:
     if not (raw and dims and panel):
         raise RuntimeError(f"Stage 2 缺少数据，请先跑 stage1('{ticker}')")
 
-    # v2.2 · Read agent_analysis.json — the agent's written-back analysis
-    agent_analysis = read_task_output(ti.full, "agent_analysis")
+    # Agent analysis must match the current raw snapshot; stale role-play is never reused.
+    from lib.agent_review import load_fresh_agent_analysis, requires_agent_review
+    agent_analysis, freshness_reason = load_fresh_agent_analysis(
+        CACHE_ROOT / ti.full,
+        raw,
+    )
 
     # v2.6 · 校验 agent_analysis schema（特别针对非 Claude 模型的输出）
     # error 级结构问题不能继续 merge，否则 narrative_override/list 等坏结构会污染 synthesis。
@@ -801,7 +808,14 @@ def stage2(ticker: str) -> str:
             if total_assoc < 3:
                 print(f"   ⚠️  跨域因果链仅 {total_assoc} 条，task2.5 要求 ≥ 3 条")
     else:
-        print(f"\n⚠️  未检测到 agent_analysis.json · 将使用脚本骨架生成 synthesis")
+        if requires_agent_review(CACHE_ROOT / ti.full):
+            raise RuntimeError(
+                f"deep 档 HARD-GATE: 当前快照没有可用的 Agent role-play（{freshness_reason}）。"
+                f"请读取 .cache/{ti.full}/_agent_review_context.json，将 analysis_input_hash 写入 "
+                "agent_analysis.json 后重跑 stage2。"
+            )
+        print(f"\n⚠️  未检测到当前快照可用的 agent_analysis.json · 将使用脚本骨架生成 synthesis")
+        print(f"   原因: {freshness_reason}")
         print(f"   提示: Claude agent 应在 stage1 之后写入 .cache/{ti.full}/agent_analysis.json")
         print(f"   然后再调用 stage2() · 这样报告质量会显著提升")
         agent_analysis = None

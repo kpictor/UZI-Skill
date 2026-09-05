@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import math
+from numbers import Real
 from typing import Any
 
 from .schema import DimResult, FetcherSpec, Quality
@@ -28,6 +30,8 @@ def is_empty_value(v: Any) -> bool:
     """
     if v is None:
         return True
+    if isinstance(v, Real) and not isinstance(v, bool):
+        return not math.isfinite(float(v))
     if isinstance(v, str):
         s = v.strip()
         if not s:
@@ -46,9 +50,17 @@ def is_data_gap(data: dict, field_name: str) -> bool:
 
 
 def normalize_empty(value: Any) -> Any:
-    """把任何 empty sentinel 规约为 None · fetcher 落盘前过这一遍."""
+    """递归把任何 empty sentinel 规约为 None · fetcher 落盘前过这一遍."""
     if is_empty_value(value):
         return None
+    if isinstance(value, dict):
+        return {k: normalize_empty(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize_empty(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(normalize_empty(v) for v in value)
+    if isinstance(value, set):
+        return {normalize_empty(v) for v in value}
     return value
 
 
@@ -67,6 +79,17 @@ def normalize_data(data: dict, keep_zero_fields: set[str] = None) -> dict:
     return out
 
 
+def _has_meaningful_data(value: Any) -> bool:
+    """递归判断结果是否至少包含一个真实值；0 和 False 均是有效数据."""
+    if is_empty_value(value):
+        return False
+    if isinstance(value, dict):
+        return any(_has_meaningful_data(v) for v in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_has_meaningful_data(v) for v in value)
+    return True
+
+
 def validate_result(result: DimResult, spec: FetcherSpec) -> DimResult:
     """根据 spec 校验 result · 自动填 data_gaps · 推断 Quality.
 
@@ -79,13 +102,16 @@ def validate_result(result: DimResult, spec: FetcherSpec) -> DimResult:
     if result.quality == Quality.ERROR:
         return result  # 错误状态不动
 
+    result.data = normalize_data(result.data)
     data = result.data
     missing_required = [f for f in spec.required_fields if is_data_gap(data, f)]
     missing_optional = [f for f in spec.optional_fields if is_data_gap(data, f)]
 
     result.data_gaps = missing_required + missing_optional
 
-    if not missing_required and not missing_optional:
+    if not _has_meaningful_data(data):
+        result.quality = Quality.MISSING
+    elif not missing_required and not missing_optional:
         result.quality = Quality.FULL
     elif not missing_required:
         result.quality = Quality.PARTIAL

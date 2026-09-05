@@ -301,6 +301,7 @@ stage2 自动识别股票 style（白马 / 高成长 / 周期 / 小盘投机 / �
 ```json
 {
   "agent_reviewed": true,
+  "analysis_input_hash": "从 _agent_review_context.json 原样复制",
   "detected_style_override": "growth_tech",
   "style_override_reason": "市值虽大但属于科技成长轨道，不是传统白马"
 }
@@ -1002,6 +1003,7 @@ echo "${CODEX:-${OPENAI_API_KEY:+codex_via_openai}}"
 | `/catalysts` | 完整 Task + 重点展示催化剂日历 |
 | `/thesis` | 只跑 thesis_tracker 单独输出 |
 | `/screen` | 跑 5 套量化筛选 |
+| `python3 screen.py --mode noon --markets A,H` | 全市场每日猎物榜 · 24 位 F 组独立战法 + Serenity · 最多 10 只 |
 | `/dd` | 跑 DD 清单 |
 
 ### 全球同行执行规则
@@ -1027,6 +1029,7 @@ echo "${CODEX:-${OPENAI_API_KEY:+codex_via_openai}}"
 | `.cache/{ticker}/dimensions.json` | Task 2 脚本 | Task 4-5 | 评分 |
 | `.cache/{ticker}/panel.json` | Task 3 规则引擎 → **你覆盖** | stage2 | 骨架→真实判断 |
 | **`.cache/{ticker}/agent_analysis.json`** | **🧠 你写** | **stage2 自动合并** | **闭环关键** |
+| `.cache/{ticker}/_agent_review_context.json` | stage1 | Agent + stage2 | 当前 raw 快照指纹 · 防止复用旧 role-play |
 | `.cache/{ticker}/synthesis.json` | stage2 (合并 agent_analysis) | Task 5 | 最终研判 |
 | `reports/{ticker}_{date}/full-report.html` | Task 5 脚本 | 用户 | 报告 |
 | `reports/{ticker}_{date}/full-report-standalone.html` | inline_assets.py | 用户分享 | 独立报告 |
@@ -1034,7 +1037,7 @@ echo "${CODEX:-${OPENAI_API_KEY:+codex_via_openai}}"
 | `reports/{ticker}_{date}/war-report.png` | render_war_report | 战报 | 战报 |
 | `reports/{ticker}_{date}/one-liner.txt` | assemble 副产 | 快速摘要 | 一句话 |
 
-> ⚠️ **agent_analysis.json 是 v2.2 新增的闭环文件。** stage2() 会自动读取并合并到 synthesis 中。如果你不写这个文件，stage2 退化为纯脚本模式（会打印警告）。
+> ⚠️ **agent_analysis.json 是 v2.2 新增的闭环文件。** lite/medium 缺失时可退化为规则报告；deep 档必须把 `_agent_review_context.json` 的 `analysis_input_hash` 原样写入，缺失或过期会被 Stage 2 拒绝。
 
 详细 schema 见 `assets/data-contracts.md`。
 

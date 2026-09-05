@@ -27,6 +27,7 @@ from lib.report.svg_primitives import (
     svg_sparkline, svg_progress_row, svg_donut,
 )
 from lib.report.institutional import trap_color_emoji
+from lib.report.security import escape_payload, safe_asset_id, safe_url
 
 
 def _safe(v, default="—"):
@@ -42,6 +43,8 @@ def render_friendly_layer(syn: dict, raw: dict) -> str:
     2. 最像的另外 3 只票 (可比)
     3. 离场触发条件 (3-5 条)
     """
+    syn = escape_payload(syn)
+    raw = escape_payload(raw)
     friendly = syn.get("friendly") or {}
 
     # ── Scenario simulator ──
@@ -75,7 +78,7 @@ def render_friendly_layer(syn: dict, raw: dict) -> str:
         code = s.get("code", "")
         similarity = s.get("similarity", "")
         reason = s.get("reason", "")
-        url = s.get("url", f"https://xueqiu.com/S/{code}" if code else "#")
+        url = safe_url(s.get("url", f"https://xueqiu.com/S/{code}" if code else "#"))
         similar_pills += f'''<a href="{url}" target="_blank" rel="noopener" class="similar-stock-pill">
   <div style="display:flex;justify-content:space-between;align-items:baseline">
     <span class="ss-name">{name}</span>
@@ -129,6 +132,7 @@ def render_fund_managers(managers: list) -> str:
       },
     ]
     """
+    managers = escape_payload(managers)
     if not managers:
         return '<div style="padding:24px;text-align:center;color:#94a3b8;font-size:12px">暂无公募基金持仓数据</div>'
 
@@ -153,7 +157,7 @@ def render_fund_managers(managers: list) -> str:
 
         name = m.get("name", "—")
         fund_name = m.get("fund_name", "—")
-        avatar = m.get("avatar", "")
+        avatar = safe_asset_id(m.get("avatar"), default="")
         position = m.get("position_pct", 0)
         rank = m.get("rank_in_fund", 0)
         quarters = m.get("holding_quarters", 0)
@@ -185,7 +189,7 @@ def render_fund_managers(managers: list) -> str:
         # Performance stars based on peer rank
         stars = "⭐" * max(1, min(5, int((100 - peer_rank) / 20) + 1))
 
-        fund_url = m.get("fund_url", f'https://fund.eastmoney.com/{m.get("fund_code", "")}.html')
+        fund_url = safe_url(m.get("fund_url", f'https://fund.eastmoney.com/{m.get("fund_code", "")}.html'))
 
         card = f'''<div class="fund-card">
   <div class="fund-header">
@@ -304,11 +308,12 @@ def _render_fund_compact_row(m: dict, rank: int) -> str:
     v2.10.1: lite 行（return_5y is None）显示持仓占比 + "点击看详情"，
     不再硬编码 "前 50%" 同类排名这种假数据。
     """
+    m = escape_payload(m)
     is_lite = m.get("_row_type") == "lite" or m.get("return_5y") is None
     name = m.get("name", "—")
     fund_name = m.get("fund_name", "—")
     fund_code = m.get("fund_code", "")
-    avatar = m.get("avatar", "")
+    avatar = safe_asset_id(m.get("avatar"), default="")
     position_pct = m.get("position_pct") or 0
 
     # rank badge
@@ -324,7 +329,7 @@ def _render_fund_compact_row(m: dict, rank: int) -> str:
     else:
         avatar_html = f'<div class="fc-avatar fc-avatar-ph">{(name[0] if name and name != "—" else "?")}</div>'
 
-    fund_url = m.get("fund_url", f"https://fund.eastmoney.com/{fund_code}.html")
+    fund_url = safe_url(m.get("fund_url", f"https://fund.eastmoney.com/{fund_code}.html"))
 
     if is_lite:
         # Lite 行：不展示 5Y 业绩，给一个"点进去看"的提示
@@ -366,6 +371,8 @@ def render_panel_insights(syn: dict, panel: dict) -> str:
       1. agent 在 agent_analysis.json 写的 panel_insights (最完整的分析)
       2. 若 agent 没写，用 panel 真实数据聚合生成一段（consensus + 流派倾向）
     """
+    syn = escape_payload(syn)
+    panel = escape_payload(panel)
     insights = (syn or {}).get("panel_insights") or ""
 
     # 没有 agent 内容也要给摘要，不能让这个位置完全空白（那就是"缺失"）
@@ -434,6 +441,8 @@ def render_panel_insights(syn: dict, panel: dict) -> str:
 
 
 def render_school_scores(syn: dict, panel: dict) -> str:
+    syn = escape_payload(syn)
+    panel = escape_payload(panel)
     """v2.15.4 · 按流派打分卡片.
 
     7 个流派 (A-G) 各自给出 consensus / avg_score / verdict ·
@@ -537,6 +546,7 @@ def render_school_scores(syn: dict, panel: dict) -> str:
 
 
 def render_debate_rounds(debate: dict) -> str:
+    debate = escape_payload(debate)
     """3 rounds bull vs bear transcript."""
     rounds = debate.get("rounds") or []
     if not rounds:
